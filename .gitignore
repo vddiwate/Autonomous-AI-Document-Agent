@@ -1,0 +1,34 @@
+# Python virtual environment
+venv/
+.venv/
+env/
+ENV/
+
+# Python cache & bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+
+# Environment configurations (Secrets)
+.env
+.env.local
+
+# IDE & Editor configurations
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Runtime logs
+logs/*.log
+*.log
+
+# Generated output documents
+storage/generated_docs/*.docx
+outputs/
+generated_documents/
+
+# OS specific files
+.DS_Store
+Thumbs.db
