@@ -11,7 +11,7 @@ class Settings(BaseSettings):
     No model names or API settings are hardcoded.
     """
     # Server Settings
-    APP_NAME: str = Field(default="Fluid AI - Autonomous Document Agent")
+    APP_NAME: str = Field(default="PlanToDoc - Autonomous Document Agent")
     APP_VERSION: str = Field(default="1.0.0")
     API_HOST: str = Field(default="0.0.0.0")
     API_PORT: int = Field(default=8000)

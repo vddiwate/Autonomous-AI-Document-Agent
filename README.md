@@ -1,4 +1,4 @@
-# Autonomous Document Agent (60-Minute Build Challenge)
+# PlanToDoc - Autonomous Document Agent (60-Minute Build Challenge)
 
 An enterprise-grade autonomous AI agent system built with **FastAPI**, **LangGraph**, and **python-docx**. The agent accepts unstructured, natural language user requests, dynamically formulates execution plans with explicit assumptions and ambiguity resolution, orchestrates specialized tools, performs automated critic reflection, and compiles high-fidelity Microsoft Word (`.docx`) business documents.
 
@@ -89,7 +89,7 @@ The assignment mandates at least **ONE** real engineering improvement. This impl
 ## 📁 Project Directory Structure
 
 ```
-d:/Fluid_AI/
+d:/PlanToDoc/
 ├── app/
 │   ├── agent/
 │   │   ├── critic.py          # QA Reflection & quality evaluation engine
@@ -131,7 +131,7 @@ d:/Fluid_AI/
 
 ### 1. Clone & Set Up Virtual Environment
 ```bash
-cd d:/Fluid_AI
+cd d:/PlanToDoc
 python -m venv venv
 venv\Scripts\activate   # Windows
 # source venv/bin/activate # Linux/macOS
