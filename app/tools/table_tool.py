@@ -49,7 +49,7 @@ Respond STRICTLY with a valid JSON object matching this schema:
         user_prompt = f"""Task Objective: {task.title}
 Detailed Instructions: {task.description}
 
-Generate the structured JSON response (concise 1-paragraph intro, 3-4 structured table rows, and 1 crisp strategic callout note):"""
+Generate the structured JSON response (2 comprehensive introductory paragraphs, 4 to 5 detailed structured table rows with technical/operational columns, and 1 crisp strategic callout note):"""
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -58,7 +58,7 @@ Generate the structured JSON response (concise 1-paragraph intro, 3-4 structured
 
         logger.info(f"Executing table_generator for task: '{task.title}'")
         try:
-            result_json = await llm_service.complete_json(messages=messages, max_tokens=550)
+            result_json = await llm_service.complete_json(messages=messages, max_tokens=480)
             raw_table = result_json.get("table", {})
             table_data = TableData(
                 headers=raw_table.get("headers", []),

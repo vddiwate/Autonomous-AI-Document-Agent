@@ -66,7 +66,7 @@ Perform your critical evaluation and provide the structured QA report."""
         ]
 
         try:
-            critique_json = await self.llm.complete_json(messages=messages, max_tokens=350)
+            critique_json = await self.llm.complete_json(messages=messages, max_tokens=180)
             report = CritiqueReport(
                 passed=bool(critique_json.get("passed", True)),
                 quality_score=float(critique_json.get("quality_score", 8.5)),

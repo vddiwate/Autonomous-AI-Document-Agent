@@ -1,7 +1,8 @@
 import logging
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, FileResponse
 
 from app.config import settings
 from app.utils.logger import setup_logging
@@ -35,9 +36,17 @@ app.add_middleware(
 # Register API Router
 app.include_router(api_router)
 
+@app.get("/ui", include_in_schema=False)
+async def serve_ui():
+    """Serves the simple React frontend."""
+    frontend_path = Path(__file__).parent.parent / "frontend" / "index.html"
+    if frontend_path.exists():
+        return FileResponse(frontend_path)
+    return RedirectResponse(url="/docs")
+
 @app.get("/", include_in_schema=False)
 async def root():
-    """Redirects base URL to interactive Swagger documentation."""
-    return RedirectResponse(url="/docs")
+    """Redirects base URL to the interactive Web UI."""
+    return RedirectResponse(url="/ui")
 
 logger.info(f"{settings.APP_NAME} v{settings.APP_VERSION} initialized successfully.")

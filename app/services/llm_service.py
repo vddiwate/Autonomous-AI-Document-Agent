@@ -25,7 +25,8 @@ class LLMService:
         try:
             self.client = AsyncGroq(
                 api_key=settings.GROQ_API_KEY,
-                timeout=float(settings.LLM_REQUEST_TIMEOUT)
+                timeout=float(settings.LLM_REQUEST_TIMEOUT),
+                max_retries=1
             )
         except Exception as e:
             logger.error(f"Failed to initialize Groq client: {e}")
@@ -133,6 +134,47 @@ class LLMService:
         except Exception as e:
             logger.error(f"complete_json failed: {e}")
             raise
+
+    async def stream_complete(
+        self,
+        messages: List[Dict[str, str]],
+        temperature: Optional[float] = None,
+        max_tokens: Optional[int] = None,
+        preferred_model: Optional[str] = None
+    ):
+        """
+        Streams completion tokens as they are produced by Groq in real time.
+        """
+        temp = temperature if temperature is not None else self.temperature
+        tokens_limit = max_tokens or self.default_max_tokens
+        
+        models_to_try: List[str] = []
+        if preferred_model and preferred_model not in models_to_try:
+            models_to_try.append(preferred_model)
+        if self.primary_model and self.primary_model not in models_to_try:
+            models_to_try.append(self.primary_model)
+        if self.fallback_model and self.fallback_model not in models_to_try:
+            models_to_try.append(self.fallback_model)
+
+        for model in models_to_try:
+            try:
+                logger.info(f"Streaming tokens from model '{model}' (max_tokens={tokens_limit})")
+                stream = await self.client.chat.completions.create(
+                    model=model,
+                    messages=messages,
+                    temperature=temp,
+                    max_tokens=tokens_limit,
+                    stream=True
+                )
+                async for chunk in stream:
+                    delta = chunk.choices[0].delta.content
+                    if delta:
+                        yield delta
+                return
+            except Exception as e:
+                logger.warning(f"Streaming error on '{model}': {e}. Attempting fallback model.")
+                continue
+        raise RuntimeError("All models failed during streaming completion.")
 
     def _extract_json(self, text: str) -> Dict[str, Any]:
         """

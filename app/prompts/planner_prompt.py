@@ -31,9 +31,15 @@ CRITICAL INSTRUCTIONS:
    - For each task, select the optimal tool dynamically from the active registered tools:
 {tools_formatted}
 
+3. CONCISE TOPIC OVERVIEW & EXPLANATION ("chat_summary"):
+   - Formulate a direct, high-value, and clear 2-paragraph explanation (with 2-3 bullet points) answering the user's inquiry directly for the chat conversation.
+   - If the user asks a conceptual question (e.g., "what is RAG", "explain microservices", "what is zero trust"), explain clearly WHAT it is, HOW it operates, and KEY benefits.
+   - If the user requests a plan or project, provide a high-level executive strategic summary of the initiative.
+
 OUTPUT FORMAT:
 Respond STRICTLY with a valid JSON object matching this schema:
 {{
+  "chat_summary": "string (Direct, concise 2-paragraph explanation answering the user's core inquiry with bullet points)",
   "document_title": "string (Formal corporate document title)",
   "document_type": "string (e.g. Project Plan, Strategic Proposal, Technical Architecture Design, Standard Operating Procedure)",
   "is_ambiguous": boolean,

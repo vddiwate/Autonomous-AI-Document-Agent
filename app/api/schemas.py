@@ -8,6 +8,7 @@ class AgentRequest(BaseModel):
     Fully dynamic: accepts any natural language input (greetings, questions, or document requests).
     """
     request: str = Field(..., description="Natural language input for the autonomous agent")
+    history: Optional[List[Dict[str, str]]] = Field(default=None, description="Recent conversation messages")
 
 class DocumentMetadata(BaseModel):
     """Generated document details and download location."""

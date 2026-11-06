@@ -32,7 +32,7 @@ class Planner:
         ]
 
         try:
-            plan_json = await self.llm.complete_json(messages=messages, max_tokens=850)
+            plan_json = await self.llm.complete_json(messages=messages, max_tokens=450)
             
             # Dynamically convert parsed tasks into validated TaskItem models
             tasks = [
@@ -49,6 +49,7 @@ class Planner:
             plan = Plan(
                 document_title=plan_json.get("document_title", "Business Document"),
                 document_type=plan_json.get("document_type", "Standard Report"),
+                chat_summary=plan_json.get("chat_summary"),
                 is_ambiguous=bool(plan_json.get("is_ambiguous", False)),
                 assumptions=plan_json.get("assumptions", []),
                 tasks=tasks

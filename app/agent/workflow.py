@@ -15,14 +15,29 @@ logger = logging.getLogger("agent.workflow")
 
 # --- 1. LANGGRAPH NODES ---
 
+def is_obviously_document_request(text: str) -> bool:
+    """Fast-path heuristic to bypass router LLM overhead for clear document/knowledge requests."""
+    t = text.lower().strip()
+    greetings = {"hi", "hello", "hey", "hola", "how are you", "who are you", "help", "yo"}
+    if t in greetings:
+        return False
+    doc_keywords = ["what", "how", "why", "difference", "explain", "create", "plan", "architecture", "design", "sop", "proposal", "roadmap", "strategy", "compare", "build"]
+    return len(t.split()) > 3 or any(k in t for k in doc_keywords)
+
 async def intent_router_node(state: AgentState) -> Dict[str, Any]:
     """
-    Node 0: Autonomous Intent Classifier.
-    Uses LLM reasoning with ZERO hardcoded word lists to dynamically understand user intent
-    and generate purely autonomous conversational replies.
+    Node 0: Autonomous Intent Classifier with fast-path bypass for instant routing.
     """
     logger.info("--- [LANGGRAPH NODE: INTENT ROUTER] ---")
     user_request = state["request"].strip()
+
+    # Fast path: instant routing without burning Groq RPM/TPM quota
+    if is_obviously_document_request(user_request):
+        logger.info("Fast-path: Request directly identified as document_generation (0s latency).")
+        return {
+            "intent": "document_generation",
+            "logs": state.get("logs", []) + ["Intent: document_generation (Fast-path)"]
+        }
 
     messages = [
         {"role": "system", "content": get_router_system_prompt()},

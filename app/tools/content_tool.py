@@ -37,7 +37,7 @@ GUIDELINES:
         user_prompt = f"""Task Objective: {task.title}
 Detailed Instructions: {task.description}
 
-Provide a concise, high-impact executive section (2 focused paragraphs plus 3 key bullet points, approximately 180 words):"""
+Provide an in-depth, authoritative executive section with 3 comprehensive paragraphs and 4-5 bulleted strategic points covering technical architecture, strategic business impact, and actionable implementation guidelines (approx. 280-320 words):"""
 
         messages = [
             {"role": "system", "content": system_prompt},
@@ -46,7 +46,7 @@ Provide a concise, high-impact executive section (2 focused paragraphs plus 3 ke
 
         logger.info(f"Executing content_generator for task: '{task.title}'")
         try:
-            content = await llm_service.complete(messages=messages, max_tokens=400)
+            content = await llm_service.complete(messages=messages, max_tokens=450)
             return content.strip()
         except Exception as e:
             logger.error(f"content_generator failed for task '{task.title}': {e}")
