@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PlanToDoc AI - Autonomous Chatbot</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- React & Babel -->
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    /* Custom scrollbar */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 9999px; }
+    ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+    .typing-dot {
+      animation: typingAnimation 1.4s infinite ease-in-out both;
+    }
+    .typing-dot:nth-child(1) { animation-delay: -0.32s; }
+    .typing-dot:nth-child(2) { animation-delay: -0.16s; }
+    @keyframes typingAnimation {
+      0%, 80%, 100% { transform: scale(0); opacity: 0.4; }
+      40% { transform: scale(1); opacity: 1; }
+    }
+    @keyframes pulse-subtle {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.6; }
+    }
+    .pulse-subtle { animation: pulse-subtle 2s infinite ease-in-out; }
+  </style>
+</head>
+<body class="bg-slate-900 text-slate-100 h-screen overflow-hidden font-sans antialiased">
+  <div id="root" class="h-full"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+    const API_BASE_URL = "http://127.0.0.1:8000";
+
+    const SUGGESTIONS = [
+      { label: "Explain RAG & Architecture", prompt: "What is RAG (Retrieval-Augmented Generation) and create an enterprise implementation plan." },
+      { label: "Cloud Migration Plan", prompt: "Create a 30-day cloud migration plan for moving 5 microservices to AWS with risk assessment and timelines." },
+      { label: "Fintech App PRD", prompt: "Write a comprehensive Product Requirements Document (PRD) for a personal finance budgeting mobile application." },
+      { label: "Zero-Trust Architecture", prompt: "Develop an enterprise security architecture proposal implementing a Zero-Trust framework." }
+    ];
+
+    function App() {
+      const [sessions, setSessions] = useState(() => {
+        const saved = localStorage.getItem("plantodoc_sessions");
+        if (saved) {
+          try { return JSON.parse(saved); } catch (e) {}
+        }
+        return [{ id: "session-1", title: "New Chat", messages: [] }];
+      });
+      const [currentSessionId, setCurrentSessionId] = useState("session-1");
+      const [input, setInput] = useState("");
+      const [loading, setLoading] = useState(false);
+      const [elapsed, setElapsed] = useState(0);
+      const [backendHealthy, setBackendHealthy] = useState(null);
+      const [sidebarOpen, setSidebarOpen] = useState(true);
+      const [liveProgress, setLiveProgress] = useState(null);
+
+      const messagesEndRef = useRef(null);
+      const textareaRef = useRef(null);
+
+      const activeSession = sessions.find((s) => s.id === currentSessionId) || sessions[0];
+
+      // Auto-save sessions to localStorage
+      useEffect(() => {
+        localStorage.setItem("plantodoc_sessions", JSON.stringify(sessions));
+      }, [sessions]);
+
+      // Backend health check
+      useEffect(() => {
+        checkHealth();
+        const timer = setInterval(checkHealth, 15000);
+        return () => clearInterval(timer);
+      }, []);
+
+      // Auto-scroll chat to bottom
+      useEffect(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+      }, [activeSession?.messages, loading, liveProgress]);
+
+      // Elapsed timer during request
+      useEffect(() => {
+        let timer;
+        if (loading) {
+          setElapsed(0);
+          timer = setInterval(() => setElapsed((prev) => prev + 1), 1000);
+        } else {
+          clearInterval(timer);
+        }
+        return () => clearInterval(timer);
+      }, [loading]);
+
+      const checkHealth = async () => {
+        try {
+          const res = await fetch(`${API_BASE_URL}/health`);
+          setBackendHealthy(res.ok);
+        } catch {
+          setBackendHealthy(false);
+        }
+      };
+
+      const handleNewChat = () => {
+        const newId = `session-${Date.now()}`;
+        const newSession = { id: newId, title: "New Chat", messages: [] };
+        setSessions((prev) => [newSession, ...prev]);
+        setCurrentSessionId(newId);
+        setInput("");
+        setLiveProgress(null);
+      };
+
+      const handleSendMessage = async (customPrompt) => {
+        const textToSend = (customPrompt || input).trim();
+        if (!textToSend || loading) return;
+
+        const userMsg = {
+          id: `msg-${Date.now()}`,
+          role: "user",
+          content: textToSend,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        };
+
+        const assistantMsgId = `msg-${Date.now() + 1}`;
+        const assistantPlaceholder = {
+          id: assistantMsgId,
+          role: "assistant",
+          streamingText: "",
+          isStreaming: true,
+          data: null,
+          timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+        };
+
+        const isFirstMessage = activeSession.messages.length === 0;
+        const newTitle = isFirstMessage 
+          ? (textToSend.length > 28 ? textToSend.substring(0, 28) + "..." : textToSend)
+          : activeSession.title;
+
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.id === currentSessionId
+              ? { ...s, title: newTitle, messages: [...s.messages, userMsg, assistantPlaceholder] }
+              : s
+          )
+        );
+
+        setInput("");
+        setLoading(true);
+
+        // Initialize Live Progress Tracker state
+        const initialProgress = {
+          router: { status: "running", message: "Analyzing user inquiry..." },
+          planner: { status: "pending", message: "Awaiting intent verification...", plan: null },
+          tasks: {},
+          critic: { status: "pending", message: "Quality reflection pending" },
+          docBuilder: { status: "pending", message: "Document compilation pending" },
+          currentStatus: "Analyzing intent..."
+        };
+        setLiveProgress(initialProgress);
+
+        // Prepare conversation history context
+        const historyPayload = activeSession.messages.slice(-6).map((m) => ({
+          role: m.role,
+          content: m.content || m.data?.message || ""
+        }));
+
+        try {
+          // Attempt streaming progress via /agent/stream
+          const streamRes = await fetch(`${API_BASE_URL}/agent/stream`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ request: textToSend, history: historyPayload })
+          });
+
+          if (!streamRes.ok || !streamRes.body) {
+            throw new Error(`Stream connection failed with status ${streamRes.status}`);
+          }
+
+          const reader = streamRes.body.getReader();
+          const decoder = new TextDecoder("utf-8");
+          let buffer = "";
+          let finalResponseData = null;
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop(); // keep last incomplete chunk
+
+            for (const line of lines) {
+              if (!line.trim()) continue;
+              try {
+                const event = JSON.parse(line);
+
+                if (event.type === "text_delta") {
+                  // Stream incoming text tokens directly into the assistant message in real time
+                  setSessions((prev) =>
+                    prev.map((s) =>
+                      s.id === currentSessionId
+                        ? {
+                            ...s,
+                            messages: s.messages.map((m) =>
+                              m.id === assistantMsgId
+                                ? { ...m, streamingText: (m.streamingText || "") + event.delta }
+                                : m
+                            )
+                          }
+                        : s
+                    )
+                  );
+                } else if (event.type === "stage") {
+                  if (event.stage === "router") {
+                    setLiveProgress((prev) => ({
+                      ...prev,
+                      router: { status: event.status, message: event.message },
+                      currentStatus: event.message
+                    }));
+                  } else if (event.stage === "planner") {
+                    setLiveProgress((prev) => {
+                      const tasksInit = {};
+                      if (event.plan && event.plan.tasks) {
+                        event.plan.tasks.forEach((t) => {
+                          tasksInit[t.id] = { id: t.id, title: t.title, tool: t.tool, status: "pending" };
+                        });
+                      }
+                      return {
+                        ...prev,
+                        planner: { status: event.status, message: event.message, plan: event.plan },
+                        tasks: Object.keys(tasksInit).length ? tasksInit : prev.tasks,
+                        currentStatus: event.message
+                      };
+                    });
+                  } else if (event.stage === "critic") {
+                    setLiveProgress((prev) => ({
+                      ...prev,
+                      critic: { status: event.status, message: event.message, score: event.quality_score, passed: event.passed },
+                      currentStatus: event.message
+                    }));
+                  } else if (event.stage === "document_builder") {
+                    setLiveProgress((prev) => ({
+                      ...prev,
+                      docBuilder: { status: event.status, message: event.message },
+                      currentStatus: event.message
+                    }));
+                  }
+                } else if (event.type === "task") {
+                  setLiveProgress((prev) => ({
+                    ...prev,
+                    tasks: {
+                      ...prev.tasks,
+                      [event.task_id]: {
+                        id: event.task_id,
+                        title: event.title,
+                        tool: event.tool,
+                        status: event.status
+                      }
+                    },
+                    currentStatus: event.message
+                  }));
+                } else if (event.type === "complete") {
+                  finalResponseData = event.response;
+                } else if (event.type === "error") {
+                  throw new Error(event.message || "Agent execution failed");
+                }
+              } catch (e) {
+                // Ignore parse errors on partial stream lines
+              }
+            }
+          }
+
+          if (finalResponseData) {
+            setSessions((prev) =>
+              prev.map((s) =>
+                s.id === currentSessionId
+                  ? {
+                      ...s,
+                      messages: s.messages.map((m) =>
+                        m.id === assistantMsgId
+                          ? { ...m, data: finalResponseData, isStreaming: false }
+                          : m
+                      )
+                    }
+                  : s
+              )
+            );
+          } else {
+            throw new Error("No final response payload received from stream");
+          }
+        } catch (streamError) {
+          // Fallback to standard /agent endpoint if stream encounters network/environment boundary issue
+          try {
+            const res = await fetch(`${API_BASE_URL}/agent`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ request: textToSend, history: historyPayload })
+            });
+
+            if (!res.ok) {
+              const errData = await res.json().catch(() => ({ detail: "Unknown server error" }));
+              throw new Error(errData.detail || `Server returned status ${res.status}`);
+            }
+
+            const data = await res.json();
+            setSessions((prev) =>
+              prev.map((s) =>
+                s.id === currentSessionId
+                  ? {
+                      ...s,
+                      messages: s.messages.map((m) =>
+                        m.id === assistantMsgId
+                          ? { ...m, data: data, isStreaming: false }
+                          : m
+                      )
+                    }
+                  : s
+              )
+            );
+          } catch (fallbackError) {
+            const errorText = fallbackError.message || streamError.message || "Failed to communicate with PlanToDoc backend.";
+            setSessions((prev) =>
+              prev.map((s) =>
+                s.id === currentSessionId
+                  ? {
+                      ...s,
+                      messages: s.messages.map((m) =>
+                        m.id === assistantMsgId
+                          ? { ...m, isError: true, content: errorText, isStreaming: false }
+                          : m
+                      )
+                    }
+                  : s
+              )
+            );
+          }
+        } finally {
+          setLoading(false);
+          setLiveProgress(null);
+        }
+      };
+
+      const handleKeyDown = (e) => {
+        if (e.key === "Enter" && !e.shiftKey) {
+          e.preventDefault();
+          handleSendMessage();
+        }
+      };
+
+      return (
+        <div className="flex h-screen w-full bg-slate-900 text-slate-100 overflow-hidden">
+          {/* ===================== SIDEBAR ===================== */}
+          <aside
+            className={`${
+              sidebarOpen ? "w-64" : "w-0 -translate-x-full"
+            } transition-all duration-300 ease-in-out bg-slate-950 flex flex-col border-r border-slate-800 flex-shrink-0 z-20`}
+          >
+            {/* Sidebar Top: New Chat */}
+            <div className="p-3 border-b border-slate-800 flex items-center gap-2">
+              <button
+                onClick={handleNewChat}
+                className="flex-1 flex items-center justify-between px-3 py-2 text-sm font-medium text-slate-200 bg-slate-900 hover:bg-slate-800 rounded-lg border border-slate-700/60 transition shadow-sm"
+              >
+                <span className="flex items-center gap-2">
+                  <svg className="w-4 h-4 text-blue-400" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                  </svg>
+                  New Document Chat
+                </span>
+                <span className="text-[10px] text-slate-400 bg-slate-800 px-1.5 py-0.5 rounded">Ctrl+N</span>
+              </button>
+            </div>
+
+            {/* Chat History List */}
+            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+              <div className="px-2 py-1 text-[11px] font-semibold tracking-wider text-slate-500 uppercase">
+                Conversations
+              </div>
+              {sessions.map((s) => (
+                <div
+                  key={s.id}
+                  onClick={() => setCurrentSessionId(s.id)}
+                  className={`group flex items-center justify-between px-3 py-2 text-xs rounded-lg cursor-pointer transition ${
+                    s.id === currentSessionId
+                      ? "bg-slate-800 text-white font-medium shadow-sm"
+                      : "text-slate-400 hover:bg-slate-900 hover:text-slate-200"
+                  }`}
+                >
+                  <div className="flex items-center gap-2 truncate">
+                    <svg className="w-3.5 h-3.5 text-slate-400 flex-shrink-0" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                    </svg>
+                    <span className="truncate">{s.title}</span>
+                  </div>
+
+                  {sessions.length > 1 && (
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSessions((prev) => prev.filter((item) => item.id !== s.id));
+                        if (currentSessionId === s.id) {
+                          const remaining = sessions.filter((item) => item.id !== s.id);
+                          setCurrentSessionId(remaining[0].id);
+                        }
+                      }}
+                      className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 p-0.5 transition"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Sidebar Bottom: Health Status */}
+            <div className="p-3 border-t border-slate-800/80 bg-slate-950/60">
+              <div className="flex items-center justify-between text-xs text-slate-400">
+                <span className="flex items-center gap-2">
+                  <span
+                    className={`inline-block w-2 h-2 rounded-full ${
+                      backendHealthy ? "bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]" : backendHealthy === false ? "bg-red-400" : "bg-amber-400"
+                    }`}
+                  ></span>
+                  {backendHealthy ? "FastAPI Online" : backendHealthy === false ? "FastAPI Offline" : "Connecting..."}
+                </span>
+                <span className="text-[10px] text-slate-500 font-mono">:8000</span>
+              </div>
+            </div>
+          </aside>
+
+          {/* ===================== MAIN CHAT AREA ===================== */}
+          <main className="flex-1 flex flex-col h-full overflow-hidden bg-slate-900 relative">
+            {/* Top Navbar */}
+            <header className="h-14 border-b border-slate-800 bg-slate-900/95 backdrop-blur px-4 flex items-center justify-between flex-shrink-0 z-10">
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => setSidebarOpen(!sidebarOpen)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition"
+                  title="Toggle Sidebar"
+                >
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                </button>
+                <div className="flex items-center gap-2">
+                  <div className="w-7 h-7 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-xs text-white shadow">
+                    AI
+                  </div>
+                  <div>
+                    <h1 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
+                      PlanToDoc Agent
+                      <span className="text-[10px] bg-blue-500/20 text-blue-400 border border-blue-500/30 px-1.5 py-0.2 rounded font-normal">
+                        LangGraph + Docx
+                      </span>
+                    </h1>
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-3 text-xs text-slate-400">
+                <a
+                  href={`${API_BASE_URL}/docs`}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="hover:text-blue-400 transition underline underline-offset-2"
+                >
+                  API Docs (/docs)
+                </a>
+              </div>
+            </header>
+
+            {/* Messages Scrollable Container */}
+            <div className="flex-1 overflow-y-auto px-4 py-6 md:px-8 space-y-6">
+              {/* Empty State / Welcome Screen */}
+              {activeSession.messages.length === 0 && (
+                <div className="max-w-2xl mx-auto my-auto text-center py-12">
+                  <div className="w-14 h-14 bg-gradient-to-tr from-blue-600 to-indigo-500 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-500/20">
+                    <svg className="w-7 h-7 text-white" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                  </div>
+                  <h2 className="text-2xl font-bold text-white mb-2">PlanToDoc AI Assistant</h2>
+                  <p className="text-sm text-slate-400 max-w-md mx-auto mb-8">
+                    Describe your requirements or questions in natural language. The agent explains the core concept directly in chat, creates an execution plan, and compiles an executive-ready <strong>Microsoft Word (.docx)</strong> document.
+                  </p>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-left">
+                    {SUGGESTIONS.map((item, idx) => (
+                      <button
+                        key={idx}
+                        onClick={() => handleSendMessage(item.prompt)}
+                        className="p-3 bg-slate-800/80 hover:bg-slate-800 border border-slate-700/60 hover:border-blue-500/50 rounded-xl transition group text-left"
+                      >
+                        <div className="text-xs font-semibold text-slate-200 group-hover:text-blue-400 transition mb-1">
+                          {item.label} &rarr;
+                        </div>
+                        <div className="text-[11px] text-slate-400 line-clamp-2">
+                          {item.prompt}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Message Thread */}
+              {activeSession.messages.map((msg) => (
+                <div
+                  key={msg.id}
+                  className={`flex gap-3 max-w-3xl mx-auto ${
+                    msg.role === "user" ? "justify-end" : "justify-start"
+                  }`}
+                >
+                  {/* Bot Avatar */}
+                  {msg.role === "assistant" && (
+                    <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center text-xs font-bold flex-shrink-0 mt-0.5 shadow">
+                      AI
+                    </div>
+                  )}
+
+                  {/* Message Bubble */}
+                  <div
+                    className={`max-w-[85%] rounded-2xl p-4 text-sm ${
+                      msg.role === "user"
+                        ? "bg-blue-600 text-white rounded-tr-sm shadow-md"
+                        : "bg-slate-800 text-slate-100 rounded-tl-sm border border-slate-700/60 shadow-sm"
+                    }`}
+                  >
+                    {/* User Message Text */}
+                    {msg.role === "user" && (
+                      <p className="whitespace-pre-wrap leading-relaxed">{msg.content}</p>
+                    )}
+
+                    {/* Error Bubble */}
+                    {msg.isError && (
+                      <div className="text-red-400 flex items-start gap-2">
+                        <svg className="w-4 h-4 text-red-400 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                        </svg>
+                        <div>
+                          <div className="font-semibold text-xs">Execution Error</div>
+                          <div className="text-xs mt-0.5 text-red-300">{msg.content}</div>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Streaming Assistant Text (Live Real-Time Generation) */}
+                    {msg.isStreaming && (
+                      <div className="space-y-2">
+                        {msg.streamingText ? (
+                          <div className="text-slate-100 leading-relaxed whitespace-pre-wrap">
+                            {msg.streamingText}
+                            <span className="inline-block w-2 h-4 bg-blue-400 ml-1 animate-pulse align-middle"></span>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2 text-slate-400 text-xs">
+                            <span className="w-2 h-2 rounded-full bg-blue-400 animate-ping"></span>
+                            <span>Synthesizing response & formulating plan...</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {/* Completed Assistant Response Content */}
+                    {!msg.isStreaming && msg.data && (
+                      <AssistantMessageView data={msg.data} />
+                    )}
+
+                    {/* Timestamp */}
+                    <div
+                      className={`text-[10px] mt-2 flex items-center gap-1 ${
+                        msg.role === "user" ? "text-blue-200 justify-end" : "text-slate-400"
+                      }`}
+                    >
+                      {msg.timestamp}
+                    </div>
+                  </div>
+
+                  {/* User Avatar */}
+                  {msg.role === "user" && (
+                    <div className="w-8 h-8 rounded-lg bg-slate-700 text-slate-300 flex items-center justify-center text-xs font-semibold flex-shrink-0 mt-0.5">
+                      You
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {/* LIVE PROGRESS EXECUTION PIPELINE (Visible during document generation) */}
+              {loading && (
+                <div className="flex gap-3 max-w-3xl mx-auto">
+                  <div className="w-8 h-8 rounded-lg bg-blue-600 text-white flex items-center justify-center text-xs font-bold flex-shrink-0 animate-pulse shadow">
+                    AI
+                  </div>
+
+                  <div className="bg-slate-800 border border-slate-700 rounded-2xl rounded-tl-sm p-4 text-sm text-slate-200 w-full max-w-xl shadow-lg">
+                    {/* Header */}
+                    <div className="flex items-center justify-between pb-3 mb-3 border-b border-slate-700/80">
+                      <div className="flex items-center gap-2">
+                        <div className="flex space-x-1">
+                          <div className="w-2 h-2 bg-blue-400 rounded-full typing-dot"></div>
+                          <div className="w-2 h-2 bg-blue-400 rounded-full typing-dot"></div>
+                          <div className="w-2 h-2 bg-blue-400 rounded-full typing-dot"></div>
+                        </div>
+                        <span className="font-semibold text-xs text-blue-400 uppercase tracking-wider">
+                          Autonomous Agent Pipeline
+                        </span>
+                      </div>
+                      <span className="text-[11px] font-mono text-slate-400 bg-slate-900 px-2 py-0.5 rounded border border-slate-700">
+                        {elapsed}s elapsed
+                      </span>
+                    </div>
+
+                    {/* Step-by-Step Progress Pipeline */}
+                    <div className="space-y-2.5 text-xs">
+                      {/* 1. Intent Router */}
+                      <div className="flex items-start gap-2.5">
+                        <StatusIcon status={liveProgress?.router?.status || "running"} />
+                        <div className="flex-1">
+                          <div className="font-medium text-slate-200">
+                            1. Intent Understanding & Routing
+                          </div>
+                          <div className="text-[11px] text-slate-400">
+                            {liveProgress?.router?.message || "Classifying user intent..."}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 2. Strategic Planning */}
+                      <div className="flex items-start gap-2.5">
+                        <StatusIcon status={liveProgress?.planner?.status || "pending"} />
+                        <div className="flex-1">
+                          <div className="font-medium text-slate-200">
+                            2. Dynamic Planning & Assumption Formulation
+                          </div>
+                          <div className="text-[11px] text-slate-400">
+                            {liveProgress?.planner?.plan 
+                              ? `Plan created: '${liveProgress.planner.plan.document_title}' (${liveProgress.planner.plan.tasks.length} tasks scheduled)`
+                              : (liveProgress?.planner?.message || "Pending...")}
+                          </div>
+
+                          {/* Show dynamic tasks as they run */}
+                          {liveProgress?.planner?.plan && (
+                            <div className="mt-2 pl-2 border-l-2 border-slate-700 space-y-1.5">
+                              {liveProgress.planner.plan.tasks.map((t) => {
+                                const currentTaskState = liveProgress.tasks?.[t.id]?.status || "pending";
+                                return (
+                                  <div key={t.id} className="flex items-center justify-between text-[11px] py-0.5">
+                                    <div className="flex items-center gap-2">
+                                      <StatusIcon status={currentTaskState} small={true} />
+                                      <span className={currentTaskState === "completed" ? "text-slate-300" : currentTaskState === "running" ? "text-blue-300 font-semibold" : "text-slate-500"}>
+                                        Step {t.id}: {t.title}
+                                      </span>
+                                    </div>
+                                    <span className="text-[10px] font-mono text-slate-400">
+                                      {currentTaskState === "running" ? "Running..." : currentTaskState === "completed" ? "Completed" : "Scheduled"}
+                                    </span>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* 3. Critic Reflection */}
+                      <div className="flex items-start gap-2.5">
+                        <StatusIcon status={liveProgress?.critic?.status || "pending"} />
+                        <div className="flex-1">
+                          <div className="font-medium text-slate-200">
+                            3. Autonomous QA Critic & Reflection
+                          </div>
+                          <div className="text-[11px] text-slate-400">
+                            {liveProgress?.critic?.message || "Validating document quality against requirements..."}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 4. Document Builder */}
+                      <div className="flex items-start gap-2.5">
+                        <StatusIcon status={liveProgress?.docBuilder?.status || "pending"} />
+                        <div className="flex-1">
+                          <div className="font-medium text-slate-200">
+                            4. Word (.docx) Compilation
+                          </div>
+                          <div className="text-[11px] text-slate-400">
+                            {liveProgress?.docBuilder?.message || "Compiling XML typography, tables, and styles..."}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              <div ref={messagesEndRef} />
+            </div>
+
+            {/* Bottom Input Area */}
+            <div className="p-4 bg-slate-900 border-t border-slate-800/80 flex-shrink-0">
+              <div className="max-w-3xl mx-auto">
+                <div className="relative bg-slate-800 border border-slate-700 rounded-2xl shadow-lg focus-within:border-blue-500 focus-within:ring-1 focus-within:ring-blue-500 transition">
+                  <textarea
+                    ref={textareaRef}
+                    rows="2"
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    onKeyDown={handleKeyDown}
+                    placeholder="Ask a question or request a document (e.g. 'What is RAG and create an architecture plan')..."
+                    className="w-full bg-transparent px-4 py-3 pr-14 text-sm text-slate-100 placeholder-slate-400 focus:outline-none resize-none leading-relaxed"
+                    disabled={loading}
+                  />
+
+                  {/* Send Button */}
+                  <button
+                    onClick={() => handleSendMessage()}
+                    disabled={loading || !input.trim()}
+                    className={`absolute right-3 bottom-2.5 w-8 h-8 rounded-xl flex items-center justify-center transition ${
+                      loading || !input.trim()
+                        ? "bg-slate-700 text-slate-500 cursor-not-allowed"
+                        : "bg-blue-600 hover:bg-blue-500 text-white shadow-md active:scale-95"
+                    }`}
+                    title="Send message (Enter)"
+                  >
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="2.5" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 12h14M12 5l7 7-7 7" />
+                    </svg>
+                  </button>
+                </div>
+
+                <div className="text-[11px] text-center text-slate-500 mt-2 flex items-center justify-center gap-3">
+                  <span>Enter to send &bull; Shift+Enter for new line</span>
+                  <span>&bull;</span>
+                  <span>Autonomous Word (.docx) Generation</span>
+                </div>
+              </div>
+            </div>
+          </main>
+        </div>
+      );
+    }
+
+    // =========================================================
+    // Status Icon Helper for Pipeline
+    // =========================================================
+    function StatusIcon({ status, small }) {
+      const sizeClass = small ? "w-3.5 h-3.5" : "w-4 h-4 mt-0.5";
+      
+      if (status === "completed") {
+        return (
+          <div className={`${sizeClass} rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/40 flex items-center justify-center flex-shrink-0 text-[10px]`}>
+            <svg className="w-2.5 h-2.5" fill="none" stroke="currentColor" strokeWidth="3" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+            </svg>
+          </div>
+        );
+      }
+      if (status === "running") {
+        return (
+          <div className={`${sizeClass} rounded-full border-2 border-blue-400 border-t-transparent animate-spin flex-shrink-0`}></div>
+        );
+      }
+      return (
+        <div className={`${sizeClass} rounded-full bg-slate-800 border border-slate-700 flex-shrink-0`}></div>
+      );
+    }
+
+    // =========================================================
+    // Assistant Message Component (Handles Chat & Document Results)
+    // =========================================================
+    function AssistantMessageView({ data }) {
+      const [showDetails, setShowDetails] = useState(false);
+      const isDocument = data.intent === "document_generation";
+
+      return (
+        <div className="space-y-3">
+          {/* Main Conversational Message (First answers the question/topic directly) */}
+          <div className="text-slate-100 leading-relaxed whitespace-pre-wrap">
+            {data.message}
+          </div>
+
+          {/* If Document was Generated: Rich Word Card & Plan */}
+          {isDocument && (
+            <div className="space-y-3 mt-3 pt-3 border-t border-slate-700/60">
+              {/* Document Download Card */}
+              {data.document && (
+                <div className="bg-gradient-to-r from-slate-900 to-slate-950 border border-blue-500/30 rounded-xl p-3.5 flex items-center justify-between gap-3 shadow-inner">
+                  <div className="flex items-center gap-3 min-w-0">
+                    <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-white text-base shadow flex-shrink-0">
+                      W
+                    </div>
+                    <div className="truncate">
+                      <div className="font-semibold text-xs text-white truncate">
+                        {data.document.filename}
+                      </div>
+                      <div className="text-[11px] text-slate-400">
+                        {(data.document.file_size_bytes / 1024).toFixed(1)} KB &bull; Microsoft Word (.docx)
+                      </div>
+                    </div>
+                  </div>
+
+                  <a
+                    href={data.document.download_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold rounded-lg shadow transition flex items-center gap-1.5 flex-shrink-0"
+                  >
+                    <span>Download</span>
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                  </a>
+                </div>
+              )}
+
+              {/* Execution Details Toggle */}
+              {data.plan && (
+                <div className="text-xs">
+                  <button
+                    onClick={() => setShowDetails(!showDetails)}
+                    className="text-blue-400 hover:text-blue-300 font-medium flex items-center gap-1.5 transition"
+                  >
+                    <svg
+                      className={`w-3.5 h-3.5 transition-transform ${showDetails ? "rotate-90" : ""}`}
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      viewBox="0 0 24 24"
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
+                    {showDetails ? "Hide Plan & Critic Reflection" : "View Autonomous Execution Plan & Critic QA"}
+                  </button>
+
+                  {/* Collapsible Details */}
+                  {showDetails && (
+                    <div className="mt-3 p-3 bg-slate-900/80 rounded-xl border border-slate-700/60 space-y-3">
+                      {/* Title & Critic */}
+                      <div className="flex flex-wrap items-center justify-between gap-2 pb-2 border-b border-slate-800">
+                        <div>
+                          <div className="font-semibold text-slate-200">{data.plan.document_title}</div>
+                          <div className="text-[11px] text-slate-400">{data.plan.document_type} &bull; {data.execution_time_seconds}s</div>
+                        </div>
+
+                        {data.critic_review && (
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-semibold ${
+                            data.critic_review.passed
+                              ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30"
+                              : "bg-amber-500/20 text-amber-400 border border-amber-500/30"
+                          }`}>
+                            QA Critic: {data.critic_review.passed ? "Passed [OK]" : "Flagged"}
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Assumptions */}
+                      {data.plan.assumptions && data.plan.assumptions.length > 0 && (
+                        <div>
+                          <div className="text-[10px] font-bold text-amber-400 uppercase tracking-wider mb-1">
+                            Assumptions Made
+                          </div>
+                          <ul className="list-disc list-inside space-y-0.5 text-[11px] text-slate-300">
+                            {data.plan.assumptions.map((a, i) => (
+                              <li key={i}>{a}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {/* Tasks breakdown */}
+                      <div>
+                        <div className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                          Executed Tasks ({data.plan.tasks.length})
+                        </div>
+                        <div className="space-y-1.5">
+                          {data.plan.tasks.map((task) => (
+                            <div key={task.id} className="p-2 bg-slate-950/60 rounded-lg border border-slate-800 text-[11px]">
+                              <div className="flex items-center justify-between text-slate-200 font-medium">
+                                <span>Step {task.id}: {task.title}</span>
+                                <span className="text-[10px] text-blue-400">{task.tool}</span>
+                              </div>
+                              <p className="text-slate-400 mt-0.5 text-[10px]">{task.description}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
